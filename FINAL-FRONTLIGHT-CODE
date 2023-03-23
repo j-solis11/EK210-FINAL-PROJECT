@@ -1,0 +1,198 @@
+#include <Wire.h>
+#include <Adafruit_MMA8451.h>
+#include <Adafruit_Sensor.h>
+#include <Arduino.h>
+#include <hp_BH1750.h>  //  include the library
+#include <SoftwareSerial.h>
+#include "VoiceRecognitionV3.h"
+hp_BH1750 BH1750;
+Adafruit_MMA8451 mma = Adafruit_MMA8451();
+VR myVR(5,4);    // 4:RX 5:TX, you can choose your favourite pins.
+uint8_t records[7]; // save record
+uint8_t buf[64];
+#define dim    (0)
+#define lit    (1) 
+#define stop   (2)
+#define reset  (3)
+
+int case_int = 1;
+
+
+void printSignature(uint8_t *buf, int len)
+{
+  int i;
+  for(i=0; i<len; i++){
+    if(buf[i]>0x19 && buf[i]<0x7F){
+      Serial.write(buf[i]);
+    }
+    else{
+      Serial.print("[");
+      Serial.print(buf[i], HEX);
+      Serial.print("]");
+    }
+  }
+}
+
+
+void printVR(uint8_t *buf)
+{
+  Serial.println("VR Index\tGroup\tRecordNum\tSignature");
+
+  Serial.print(buf[2], DEC);
+  Serial.print("\t\t");
+
+  if(buf[0] == 0xFF){
+    Serial.print("NONE");
+  }
+  else if(buf[0]&0x80){
+    Serial.print("UG ");
+    Serial.print(buf[0]&(~0x80), DEC);
+  }
+  else{
+    Serial.print("SG ");
+    Serial.print(buf[0], DEC);
+  }
+  Serial.print("\t");
+
+  Serial.print(buf[1], DEC);
+  Serial.print("\t\t");
+  if(buf[3]>0){
+    printSignature(buf+4, buf[3]);
+  }
+  else{
+    Serial.print("NONE");
+  }
+  Serial.println("\r\n");
+}
+
+void setup(void) {
+  myVR.begin(9600);
+
+  Serial.begin(9600);
+  
+  Serial.println("Adafruit MMA8451 test!");
+  
+  
+
+  if (! mma.begin()) {
+    Serial.println("Couldnt start");
+    while (1);
+  }
+  Serial.println("MMA8451 found!");
+
+  Serial.println("Elechouse Voice Recognition V3 Module\r\nControl LED sample");
+  if(myVR.clear() == 0){
+    Serial.println("Recognizer cleared.");
+  }else{
+    Serial.println("Not find VoiceRecognitionModule.");
+    Serial.println("Please check connection and restart Arduino.");
+    while(1);
+  }
+
+  if(myVR.load((uint8_t)dim) >= 0){
+    Serial.println("dim loaded");
+  }
+  
+  if(myVR.load((uint8_t)lit) >= 0){
+    Serial.println("lit loaded");
+  }
+  
+  if(myVR.load((uint8_t)stop) >= 0){
+    Serial.println("stop loaded");
+  }
+  
+  if(myVR.load((uint8_t)reset) >= 0){
+    Serial.println("reset loaded");
+  }
+  
+  mma.setRange(MMA8451_RANGE_2_G);
+  
+  Serial.print("Range = "); Serial.print(2 << mma.getRange());  
+  Serial.println("G");
+  bool avail = BH1750.begin(BH1750_TO_GROUND);
+  
+}
+
+void loop() {
+  // Read the 'raw' data in 14-bit counts
+  mma.read();
+ 
+  /* Get a new sensor event */ 
+  sensors_event_t event; 
+  mma.getEvent(&event);
+
+  /* Display the results (acceleration is measured in m/s^2) */
+  Serial.print("Y: \t"); Serial.print(event.acceleration.y); Serial.print("\t");
+
+  Serial.println();
+  BH1750.start();   //starts a measurement
+  float lux=BH1750.getLux();  //  waits until a conversion finished
+  Serial.println(lux);
+
+  int ret;
+  ret = myVR.recognize(buf, 50);
+  int x;
+  int count;
+
+  if(ret>0){
+    switch(buf[1]) {
+      case reset: 
+        case_int = 1;
+        break;
+      case stop: 
+        case_int = 2;
+        break;
+      default:
+        Serial.println("Record function undefined");
+        break;
+    }
+    /** voice recognized */
+    printVR(buf);
+  }
+
+  if (case_int == 1) {
+    if (lux < 20) {
+      x = 0;
+    }
+    if (lux > 80) {
+      x = 255;
+    } 
+    else {
+      x = lux;
+    }
+    count = 0;
+    if ((event.acceleration.y > 1.5) && (lux > 0) && (x > 10)) {
+      x = x - 30;
+      count = count  + 1;
+      delay(1000);
+    }
+    x = x - count;
+  }
+  else if (case_int == 2) {
+    count = 0;
+    if(ret>0){
+      switch(buf[1]) {
+        case dim:
+          x = x + 40;
+          break;
+        case lit:
+          x = x - 40;
+          break;
+        default:
+          Serial.println("Record function undefined");
+          break;
+        }
+    /** voice recognized */
+    printVR(buf);
+    if ((event.acceleration.y > 1.5) && (lux > 0) && (x > 10)) {
+      x = x - 30;
+      count = count  + 1;
+      delay(1000);
+    }
+    x = x - count;
+  }
+}
+
+  analogWrite(3,x);
+  delay(50);
+  }
